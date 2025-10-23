@@ -1,0 +1,184 @@
+<svg id="wiggle-blob" xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600">
+    <defs>
+        <style>
+            /* Keep stroke width constant even when the SVG scales */
+            #blob {
+            vector-effect: non-scaling-stroke;
+            stroke-linejoin: round;
+            stroke-linecap: round;
+            }
+        </style>
+    </defs>
+
+    <!-- The blob path -->
+    <path id="blob" d="" fill="rgba(0,0,0,0.5)" stroke="#000" stroke-width="8"/>
+
+    <script><![CDATA[
+    (function () {
+      // ====== Tunables ======
+      // HSB ranges inspired by: fill(random(0, .5), random(.5, 1), random(0, .75), .5)
+      // Narrowed to "greenish" hues; set to 0.0 and 0.5 to allow red→green range from the original.
+      const HUE_MIN = 0.25;   // ≈ 90°  (green)
+      const HUE_MAX = 0.45;   // ≈ 162° (yellow-green)
+      const SAT_MIN = 0.50;
+      const SAT_MAX = 1.00;
+      const BRI_MIN = 0.00;
+      const BRI_MAX = 0.75;
+      const ALPHA   = 0.50;
+
+      const POINTS = 128;     // smoothness of the blob outline
+      const CENTER_X = 300;
+      const CENTER_Y = 300;
+      const R_BASE   = 180;   // base radius
+      const AMP1     = 28;    // amplitude for the 1st ripple
+      const AMP2     = 18;    // amplitude for the 2nd ripple
+      const FREQ1    = 3.0;   // ripples per revolution
+      const FREQ2    = 5.0;
+      const SPEED1   = 0.6;   // wiggle speeds
+      const SPEED2   = -0.9;
+
+      // Color transition speed (smaller = slower)
+      const COLOR_LERP = 0.01;
+
+      const path = document.getElementById('blob');
+
+      // --- Utilities ---
+      function rand(a, b) { return a + Math.random() * (b - a); }
+
+      // HSV (0..1) → RGB [0..255]
+      function hsvToRgb(h, s, v) {
+        h = ((h % 1) + 1) % 1; // wrap
+        const i = Math.floor(h * 6);
+        const f = h * 6 - i;
+        const p = v * (1 - s);
+        const q = v * (1 - f * s);
+        const t = v * (1 - (1 - f) * s);
+        let r, g, b;
+        switch (i % 6) {
+          case 0: r = v; g = t; b = p; break;
+          case 1: r = q; g = v; b = p; break;
+          case 2: r = p; g = v; b = t; break;
+          case 3: r = p; g = q; b = v; break;
+          case 4: r = t; g = p; b = v; break;
+          case 5: r = v; g = p; b = q; break;
+        }
+        return [
+          Math.round(r * 255),
+          Math.round(g * 255),
+          Math.round(b * 255),
+        ];
+      }
+
+      function rgbaStringFromHSV(h, s, v, a) {
+        const [r, g, b] = hsvToRgb(h, s, v);
+        return `rgba(${r},${g},${b},${a})`;
+      }
+
+      function lerp(a, b, t) { return a + (b - a) * t; }
+      function wrapHueLerp(a, b, t) {
+        // Shortest-path interpolation around the hue circle
+        let d = b - a;
+        if (d >  0.5) d -= 1.0;
+        if (d < -0.5) d += 1.0;
+        return (a + d * t + 1.0) % 1.0;
+      }
+
+      // Catmull-Rom to cubic Bezier for CLOSED loop
+      function catmullRomClosedToPath(points, tension = 1) {
+        const n = points.length;
+        if (n < 3) return '';
+        let d = `M ${points[0].x} ${points[0].y}`;
+        for (let i = 0; i < n; i++) {
+          const p0 = points[(i - 1 + n) % n];
+          const p1 = points[i];
+          const p2 = points[(i + 1) % n];
+          const p3 = points[(i + 2) % n];
+          const cp1x = p1.x + (p2.x - p0.x) / 6 * tension;
+          const cp1y = p1.y + (p2.y - p0.y) / 6 * tension;
+          const cp2x = p2.x - (p3.x - p1.x) / 6 * tension;
+          const cp2y = p2.y - (p3.y - p1.y) / 6 * tension;
+          d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+        }
+        d += ' Z';
+        return d;
+      }
+
+      // --- Color state ---
+      let colorCurr = {
+        h: rand(HUE_MIN, HUE_MAX),
+        s: rand(SAT_MIN, SAT_MAX),
+        v: rand(BRI_MIN, BRI_MAX),
+        a: ALPHA
+      };
+      let colorTarget = {
+        h: rand(HUE_MIN, HUE_MAX),
+        s: rand(SAT_MIN, SAT_MAX),
+        v: rand(BRI_MIN, BRI_MAX),
+        a: ALPHA
+      };
+
+      function maybePickNewTarget() {
+        // When we're close enough in HSV space, pick a new target within the same ranges
+        const dh = Math.min(Math.abs(colorCurr.h - colorTarget.h), 1 - Math.abs(colorCurr.h - colorTarget.h));
+        const ds = Math.abs(colorCurr.s - colorTarget.s);
+        const dv = Math.abs(colorCurr.v - colorTarget.v);
+        if (dh < 0.01 && ds < 0.01 && dv < 0.01) {
+          colorTarget = {
+            h: rand(HUE_MIN, HUE_MAX),
+            s: rand(SAT_MIN, SAT_MAX),
+            v: rand(BRI_MIN, BRI_MAX),
+            a: ALPHA
+          };
+        }
+      }
+
+      function stepColor() {
+        colorCurr = {
+          h: wrapHueLerp(colorCurr.h, colorTarget.h, COLOR_LERP),
+          s: lerp(colorCurr.s, colorTarget.s, COLOR_LERP),
+          v: lerp(colorCurr.v, colorTarget.v, COLOR_LERP),
+          a: ALPHA
+        };
+        path.setAttribute('fill', rgbaStringFromHSV(colorCurr.h, colorCurr.s, colorCurr.v, colorCurr.a));
+      }
+
+      // --- Geometry / animation ---
+      let startMs = performance.now();
+
+      function frame(nowMs) {
+        const t = (nowMs - startMs) / 1000; // seconds
+
+        // Build points on a closed loop with time-varying radius
+        const pts = [];
+        for (let i = 0; i < POINTS; i++) {
+          const theta = (i / POINTS) * Math.PI * 2;
+          const r = R_BASE
+                  + AMP1 * Math.sin(FREQ1 * theta + t * SPEED1)
+                  + AMP2 * Math.sin(FREQ2 * theta + t * SPEED2);
+
+          const x = CENTER_X + r * Math.cos(theta);
+          const y = CENTER_Y + r * Math.sin(theta);
+          pts.push({ x, y });
+        }
+
+        // Smooth closed spline via Catmull-Rom → cubic Bézier
+        const d = catmullRomClosedToPath(pts, 1);
+        path.setAttribute('d', d);
+
+        // Color transition
+        maybePickNewTarget();
+        stepColor();
+
+        requestAnimationFrame(frame);
+      }
+
+      // Initialize
+      path.setAttribute('fill-opacity', ALPHA.toString());
+      path.setAttribute('stroke', '#000');
+      path.setAttribute('stroke-width', '8');
+
+      // Kick off the loop
+      requestAnimationFrame(frame);
+    })();
+  ]]></script>
+</svg>
